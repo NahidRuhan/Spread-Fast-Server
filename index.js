@@ -6,6 +6,7 @@ const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const dns = require("dns");
 const stripe = require("stripe")(process.env.STRIPE_SECRET);
 const crypto = require("crypto");
+const verifyFBToken = require("./middleware/verifyFBToken");
 
 // Force Node.js to use Google DNS internally, bypassing stubborn router/antivirus blocks!
 dns.setServers(["8.8.8.8", "8.8.4.4"]);
@@ -41,6 +42,7 @@ async function run() {
     const db = client.db("spread_fast_db");
     const parcelsCollection = db.collection("parcels");
     const paymentCollection = db.collection("payments");
+    const userCollection = db.collection("users");
 
     // parcel related api
 
@@ -109,6 +111,10 @@ async function run() {
       const sessionId = req.query.session_id;
       const session = await stripe.checkout.sessions.retrieve(sessionId);
       const trackingId = generateTrackingId();
+      const transactionId = session.payment_intent;
+      const query = { transactionId: transactionId };
+      const transactionExists = await paymentCollection.findOne(query)
+      if(transactionExists) return res.send({message:"Transaction already exist",transactionId:transactionId,trackingId:transactionExists.trackingId})
       if (session.payment_status === "paid") {
         const id = session.metadata.parcelId;
         const query = { _id: new ObjectId(id) };
@@ -126,9 +132,10 @@ async function run() {
           customerEmil: session.customer_email,
           parcelId: session.metadata.parcelId,
           parcelName: session.metadata.parcelName,
-          transactionId: session.payment_intent,
+          transactionId: transactionId,
           paymentStatus: session.payment_status,
           paid_at: new Date(),
+          trackingId: trackingId
         };
 
         const resultPayment = await paymentCollection.insertOne(payment);
@@ -144,6 +151,31 @@ async function run() {
       }
       res.send({ success: false });
     });
+
+    app.get('/payments',verifyFBToken,async(req,res)=>{
+      const email = req.query.email
+      const query = {}
+      if(email){
+        query.customerEmil = email
+        if(email!=req.decoded_email){
+          return res.status(403).send({message: "Forbidden access"})
+        }
+      }
+      const cursor = paymentCollection.find(query).sort({paid_at:-1})
+      const result = await cursor.toArray()
+      res.send(result)
+    })
+
+    // user related API 
+
+    app.post('/users',async(req,res)=>{
+      const user = req.body
+      user.role = 'user'
+      user.created_at = new Date()
+      const result = await userCollection.insertOne(user)
+      res.send(result)
+    })
+
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
