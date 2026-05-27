@@ -172,6 +172,8 @@ async function run() {
       const user = req.body
       user.role = 'user'
       user.created_at = new Date()
+      const isUserAvailable = await userCollection.findOne({ email: user.email })
+      if(isUserAvailable) return res.send("User already exists")
       const result = await userCollection.insertOne(user)
       res.send(result)
     })
