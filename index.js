@@ -43,10 +43,11 @@ async function run() {
     const parcelsCollection = db.collection("parcels");
     const paymentCollection = db.collection("payments");
     const userCollection = db.collection("users");
+    const riderCollection = db.collection("riders");
 
     // parcel related api
 
-    app.get("/parcels", async (req, res) => {
+    app.get("/parcels", verifyFBToken , async (req, res) => {
       const query = {};
       const { email } = req.query;
       if (email) query.senderEmail = email;
@@ -57,7 +58,7 @@ async function run() {
       res.send(result);
     });
 
-    app.get("/parcels/:id", async (req, res) => {
+    app.get("/parcels/:id",verifyFBToken, async (req, res) => {
       const id = req.params.id;
       const query = { _id: new ObjectId(id) };
       const result = await parcelsCollection.findOne(query);
@@ -178,6 +179,54 @@ async function run() {
       res.send(result)
     })
 
+    // rider related API 
+
+    app.get('/riders',verifyFBToken ,async(req,res)=>{
+      const query = {};
+      const { email, status } = req.query;
+      if (email) query.email = email;
+      if (status) query.status = status;
+      const cursor = riderCollection.find(query)
+      const result = await cursor.toArray()
+      res.send(result)
+    })
+
+    app.post('/riders',async(req,res)=>{
+      const rider = req.body
+      rider.status = "pending"
+      rider.created_at = new Date()
+      const isRiderAvailable = await riderCollection.findOne({email:rider.email})
+      if(isRiderAvailable) return res.send("Rider already Exists")
+      const result = await riderCollection.insertOne(rider)
+      res.send(result)
+    })
+
+    app.patch('/riders/:id', verifyFBToken, async (req, res) => {
+      const id = req.params.id;
+      const { status } = req.body;
+      const query = { _id: new ObjectId(id) };
+      
+      // Find the rider to get their email address
+      const rider = await riderCollection.findOne(query);
+      if (!rider) {
+        return res.status(404).send({ message: "Rider not found" });
+      }
+
+      const updateDoc = {
+        $set: {
+          status: status
+        }
+      };
+      const result = await riderCollection.updateOne(query, updateDoc);
+
+      // If the rider is approved, update their corresponding user role
+      if (status === 'approved' && result.modifiedCount > 0) {
+        const userQuery = { email: rider.email };
+        await userCollection.updateOne(userQuery, { $set: { role: 'rider' } });
+      }
+
+      res.send(result);
+    });
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
